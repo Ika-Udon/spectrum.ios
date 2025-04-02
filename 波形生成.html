@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>瞬時にオーディオスペクトラムを取得</title>
+</head>
+<body>
+  <h1>オーディオスペクトラム</h1>
+  <input type="file" id="audioInput">
+  <canvas id="spectrumCanvas" width="800" height="200"></canvas>
+  <!-- n分の1(last)用：サンプリング間隔を指定する入力 -->
+  <input type="number" id="interval" min="1" value="3" placeholder="サンプリング間隔">
+  <button id="saveButton" disabled>Save Bar Heights</button>
+
+  <script>
+    const audioInput = document.getElementById('audioInput');
+    const spectrumCanvas = document.getElementById('spectrumCanvas');
+    const spectrumCanvasContext = spectrumCanvas.getContext('2d');
+    const saveButton = document.getElementById('saveButton');
+
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    let spectrumData = [];
+    let isRecording = false;
+    let recordedData = [];
+
+    // 記録用のボタンを追加
+    const recordButton = document.createElement('button');
+    recordButton.textContent = '記録開始';
+    document.body.insertBefore(recordButton, saveButton);
+
+    recordButton.addEventListener('click', function() {
+      if (!isRecording) {
+        recordedData = [];
+        isRecording = true;
+        recordButton.textContent = '記録停止';
+      } else {
+        isRecording = false;
+        recordButton.textContent = '記録開始';
+      }
+    });
+
+    audioInput.addEventListener('change', async function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      // ファイル選択時に記録を開始
+      recordedData = [];
+      isRecording = true;
+      recordButton.textContent = '記録停止';
+
+      const fileReader = new FileReader();
+      fileReader.onload = async function (e) {
+        const arrayBuffer = e.target.result;
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+
+        // 再生終了時に記録を停止
+        source.onended = () => {
+          isRecording = false;
+          recordButton.textContent = '記録開始';
+        };
+
+        source.start();
+
+        // アニメーションフレームを使用してリアルタイム更新
+        function updateSpectrum() {
+          analyser.getByteFrequencyData(dataArray);
+          spectrumData = Array.from(dataArray.slice(0, 480));
+          if (isRecording) {
+            recordedData.push([...spectrumData]);
+          }
+          drawSpectrum(spectrumData);
+          requestAnimationFrame(updateSpectrum);
+        }
+        
+        updateSpectrum();
+        saveButton.disabled = false;
+      };
+
+      fileReader.readAsArrayBuffer(file);
+    });
+
+    function drawSpectrum(data) {
+      spectrumCanvasContext.clearRect(0, 0, spectrumCanvas.width, spectrumCanvas.height);
+      spectrumCanvasContext.fillStyle = 'rgb(0, 0, 150)';
+
+      const barWidth = 5;
+      let xPos = 0;
+
+      for (let i = 0; i < data.length; i++) {
+        const barHeight = data[i];
+        spectrumCanvasContext.fillRect(xPos, spectrumCanvas.height - barHeight, barWidth, barHeight);
+        xPos += barWidth + 1;
+      }
+    }
+
+    saveButton.addEventListener('click', function () {
+      if (recordedData.length === 0) {
+        alert('記録されたデータがありません');
+        return;
+      }
+
+      // 1. 各フレームごとにバーチャート高さを算出し、"/"区切りのテキストに変換
+      const heightsText = recordedData
+        .map(frame => frame.map(height => Math.floor(height / 2)).join('/'))
+        .join('\n');
+
+      // 2. text変換_整理(1)の処理：奇数行のみ処理し、各行で奇数番目の値のみ残す
+      const originalLines = heightsText.split('\n').filter(line => line.trim() !== '');
+      let updatedContent = '';
+      for (let i = 0; i < originalLines.length; i++) {
+        if ((i + 1) % 2 !== 0) {
+          const values = originalLines[i].split('/');
+          let updatedLine = '';
+          for (let j = 0; j < values.length; j++) {
+            if ((j + 1) % 2 !== 0) {
+              updatedLine += values[j] + '/';
+            }
+          }
+          updatedContent += updatedLine + '\n';
+        }
+      }
+
+      // 3. text変換_数字(2)の処理：数字部分を正規表現でマッチさせ、Math.round(数字/3)による置換
+      let digitConverted = updatedContent.replace(/(\d+)(?=\/)|(?<=\/)(\d+)/g, function(match, p1, p2) {
+        let number = 0;
+        if (p1 !== undefined) {
+          number = parseInt(p1, 10);
+        } else if (p2 !== undefined) {
+          number = parseInt(p2, 10);
+        }
+        let result = Math.round(number / 3);
+        if (result === 0) {
+          return '"';
+        } else if (result === 1) {
+          return '#';
+        } else if (result === 2) {
+          return '$';
+        } else if (result === 3) {
+          return '%';
+        } else if (result === 4) {
+          return '&';
+        } else if (result === 5) {
+          return "'";
+        } else if (result === 6) {
+          return '(';
+        } else if (result === 7) {
+          return ')';
+        } else if (result === 8) {
+          return '=';
+        } else if (result === 9) {
+          return '^';
+        } else if (result === 10) {
+          return '!';
+        } else if (result >= 11 && result <= 36) {
+          return String.fromCharCode(96 + result - 10);
+        } else if (result >= 37 && result <= 52) {
+          return String.fromCharCode(64 + result - 36);
+        }
+        return match;
+      });
+
+      // 4. text変換_スラッシュけし(3)の処理：すべての "/" を削除
+      let finalContent = digitConverted.replace(/\//g, '');
+
+      // 5. n分の1(last)の処理：各行をユーザー指定の間隔でサンプリング
+      const interval = parseInt(document.getElementById('interval').value, 10) || 1;
+      let sampledContent = finalContent.split('\n').map(line => {
+        let newLine = '';
+        for(let i = 0; i < line.length; i++) {
+          if(i % interval === 0) {
+            newLine += line[i];
+          }
+        }
+        return newLine;
+      }).join('\n');
+
+      // 最終結果を出力
+      const blob = new Blob([sampledContent], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '最終_波形.txt';
+      a.click();
+
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
